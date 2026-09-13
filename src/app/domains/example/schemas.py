@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
-from pydantic import ConfigDict, Field
 from pydantic import BaseModel as _BaseModel
+from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -21,10 +21,11 @@ class CamelModel(_BaseModel):
 
 # ── Pagination ────────────────────────────────────────────────────────────────
 
+
 class PaginationMeta(CamelModel):
     total: int
     page_size: int
-    next_cursor: Optional[str] = None
+    next_cursor: str | None = None
 
 
 class PagedResponse(CamelModel):
@@ -34,21 +35,22 @@ class PagedResponse(CamelModel):
 
 # ── ExampleItem ───────────────────────────────────────────────────────────────
 
+
 class ExampleItemCreate(CamelModel):
     name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class ExampleItemUpdate(CamelModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
+    name: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
     version: int = Field(..., description="Current record version for optimistic locking")
 
 
 class ExampleItemResponse(CamelModel):
     id: UUID
     name: str
-    description: Optional[str]
+    description: str | None
     version: int
     created_at: datetime
     updated_at: datetime

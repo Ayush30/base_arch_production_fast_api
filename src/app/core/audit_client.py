@@ -51,4 +51,4 @@ async def emit_audit_event(
             KafkaTopics.Audit.USER_ACTIVITY, event, key=str(actor_id) if actor_id else None
         )
     except Exception as exc:
-        logger.warning("audit_event_publish_failed", error=str(exc), event=event)
+        logger.warning("audit_event_publish_failed", error=str(exc), audit_event=event)

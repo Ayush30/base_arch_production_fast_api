@@ -40,7 +40,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+        correlation_id = str(uuid.uuid4())
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
 
@@ -87,7 +87,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         start = time.perf_counter()
         response = await call_next(request)
         duration_ms = (time.perf_counter() - start) * 1000
-        route = str(getattr(request.scope.get("route"), "path", request.url.path))
+        route = str(getattr(request.scope.get("route"), "path", "unmatched"))
 
         if settings.metrics_enabled and request.url.path != settings.metrics_path:
             record_http_request(

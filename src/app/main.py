@@ -4,7 +4,11 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import settings
 from app.core.exceptions import AppError, app_error_handler
@@ -13,11 +17,10 @@ from app.core.middleware import (
     CorrelationIdMiddleware,
     LanguageMiddleware,
     RequestLoggingMiddleware,
-    TenantMiddleware,
 )
 from app.core.telemetry import configure_telemetry, mount_metrics
 from app.db.session import dispose_engines
-from app.kafka.producer import start_kafka_producer, stop_kafka_producer
+from app.kafka.producer import stop_kafka_producer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -28,8 +31,6 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("startup", service=settings.app_name, env=settings.app_env)
-    await start_kafka_producer()
-    logger.info("kafka_producer_started", bootstrap_servers=settings.kafka_bootstrap_servers)
     yield
     await stop_kafka_producer()
     await dispose_engines()
@@ -50,9 +51,31 @@ def create_app() -> FastAPI:
 
     # Middleware — outermost first (executed inside-out)
     app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(TenantMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(LanguageMiddleware)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Correlation-ID"],
+        expose_headers=["X-Correlation-ID"],
+    )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+
+    @app.exception_handler(IntegrityError)
+    async def integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "code": "CONFLICT",
+                    "message": "Record conflicts with existing data or a database constraint",
+                    "details": [],
+                }
+            },
+        )
 
     # Exception handlers
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]

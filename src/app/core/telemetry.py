@@ -26,7 +26,7 @@ def configure_telemetry() -> None:
     metric_reader = PrometheusMetricReader()
     meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
 
-    if not settings.is_local:
+    if settings.app_env not in {"local", "test"}:
         exporter = OTLPSpanExporter(endpoint=settings.otlp_endpoint)
         trace_provider.add_span_processor(BatchSpanProcessor(exporter))
 

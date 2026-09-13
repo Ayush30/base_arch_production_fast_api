@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, func, text
+from sqlalchemy import DateTime, Integer, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -41,7 +40,7 @@ class AuditMixin:
 class SoftDeleteMixin:
     """Logical delete — hard deletes of tenant data are forbidden."""
 
-    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+    deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
 

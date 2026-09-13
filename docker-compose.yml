@@ -1,128 +1,108 @@
-services:
-  app:
-    container_name: sgi-base-service
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    ports:
-      - "${APP_PORT:-8000}:${APP_PORT:-8000}"
-    environment:
-      APP_ENV: dev
-      APP_HOST: 0.0.0.0
-      APP_PORT: ${APP_PORT:-8000}
-      APP_DOCS_ENABLED: ${APP_DOCS_ENABLED:-true}
-      APP_DEBUG: ${APP_DEBUG:-true}
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/sgi_backend
-      REDIS_URL: redis://redis:6379/0
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID:-sgi-backend}
-      OTLP_ENDPOINT: http://jaeger:4317
-      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-sgi-backend}
-      METRICS_ENABLED: ${METRICS_ENABLED:-true}
-      METRICS_PATH: ${METRICS_PATH:-/metrics}
-      TENANT_SCHEMA_PREFIX: ${TENANT_SCHEMA_PREFIX:-tenant_}
-      SHARED_SCHEMA: ${SHARED_SCHEMA:-shared}
-    volumes:
-      - ./src:/app/src
-      - ./keys:/app/keys
-    networks:
-      - default
-      - sgi-network
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      jaeger:
-        condition: service_started
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "python -c \"import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\\\"APP_PORT\\\", \\\"8000\\\")}/api/v1/health', timeout=3)\"",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+x-api: &api
+  build: .
+  env_file: .env
+  environment: &environment
+    DATABASE_URL: postgresql+asyncpg://marketplace:marketplace@db:5432/marketplace
+    REDIS_URL: redis://redis:6379/0
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    OTLP_ENDPOINT: ${DOCKER_OTLP_ENDPOINT:-http://jaeger:4317}
+    JWT_PRIVATE_KEY_PATH: /run/keys/private.pem
+    JWT_PUBLIC_KEY_PATH: /run/keys/public.pem
+  # Local containers use the host UID so a 0600 private key stays readable without chmod 644.
+  user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+  volumes:
+    - ./keys:/run/keys:ro
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
 
+services:
   db:
-    container_name: sgi-base-db
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: sgi_backend
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      POSTGRES_USER: marketplace
+      POSTGRES_PASSWORD: marketplace
+      POSTGRES_DB: marketplace
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace"]
       interval: 5s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
+      timeout: 3s
+      retries: 20
   redis:
-    container_name: sgi-base-redis
     image: redis:7-alpine
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 5s
-      retries: 5
-
-  jaeger:
-    container_name: sgi-base-jaeger
-    image: jaegertracing/all-in-one:latest
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-    ports:
-      - "${JAEGER_UI_PORT:-16686}:16686"
-      - "${OTLP_GRPC_PORT:-4317}:4317"
-      - "${OTLP_HTTP_PORT:-4318}:4318"
-
-  prometheus:
-    container_name: sgi-base-prometheus
-    image: prom/prometheus:latest
-    environment:
-      APP_PORT: ${APP_PORT:-8000}
-      METRICS_PATH: ${METRICS_PATH:-/metrics}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        cat > /etc/prometheus/prometheus.yml <<EOF
-        global:
-          scrape_interval: 15s
-
-        scrape_configs:
-          - job_name: "sgi-base-service"
-            metrics_path: "$${METRICS_PATH:-/metrics}"
-            static_configs:
-              - targets: ["app:$${APP_PORT:-8000}"]
-        EOF
-        exec /bin/prometheus \
-          --config.file=/etc/prometheus/prometheus.yml \
-          --storage.tsdb.path=/prometheus \
-          --web.console.libraries=/usr/share/prometheus/console_libraries \
-          --web.console.templates=/usr/share/prometheus/consoles
-    ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *api
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+  app:
+    <<: *api
+    ports: ["127.0.0.1:${APP_PORT:-8000}:8000"]
     depends_on:
-      app:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  reservations:
+    <<: *api
+    command: ["python", "-m", "app.workers.reservations"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  kafka:
+    image: apache/kafka:3.9.1
+    profiles: ["events"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes: ["kafka_data:/var/lib/kafka/data"]
+  outbox:
+    <<: *api
+    profiles: ["events"]
+    environment:
+      <<: *environment
+      KAFKA_ENABLED: "true"
+    command: ["python", "-m", "app.workers.outbox"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka:
         condition: service_started
-    volumes:
-      - prometheus_data:/prometheus
-
-networks:
-  default:
-  sgi-network:
-    external: true
-
+    restart: unless-stopped
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    profiles: ["observability"]
+    ports: ["127.0.0.1:9090:9090"]
+    volumes: ["./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    profiles: ["observability"]
+    ports: ["127.0.0.1:16686:16686", "127.0.0.1:4317:4317"]
 volumes:
   postgres_data:
-  prometheus_data:
+  kafka_data:

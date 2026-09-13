@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -14,7 +14,7 @@ from app.domains.example.service import ExampleItemService
 ACTOR_ID = UUID("00000000-0000-0000-0000-000000000001")
 ITEM_ID = UUID("00000000-0000-0000-0000-000000000010")
 
-_now = datetime.now(timezone.utc)
+_now = datetime.now(UTC)
 
 
 def _make_item(**kwargs: object) -> ExampleItem:
@@ -52,9 +52,7 @@ async def test_create_delegates_to_repo(service: ExampleItemService, repo: Async
 
 
 @pytest.mark.asyncio
-async def test_update_version_mismatch_raises(
-    service: ExampleItemService, repo: AsyncMock
-) -> None:
+async def test_update_version_mismatch_raises(service: ExampleItemService, repo: AsyncMock) -> None:
     repo.get_by_id.return_value = _make_item(version=2)
     with pytest.raises(OptimisticLockError):
         await service.update(ITEM_ID, ExampleItemUpdate(name="New", version=1))

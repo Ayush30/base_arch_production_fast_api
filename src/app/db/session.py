@@ -135,3 +135,14 @@ async def get_read_db_session() -> AsyncGenerator[AsyncSession, None]:
     """
     async for session in _tenant_session(read_engine):
         yield session
+
+
+@asynccontextmanager
+async def marketplace_session() -> AsyncGenerator[AsyncSession, None]:
+    """Single marketplace schema; seller isolation is enforced by ownership queries.
+
+    Commit in the route/service before returning mutations when a commit failure
+    must be visible to the client. This final commit also covers read-only routes.
+    """
+    async with shared_session() as session:
+        yield session

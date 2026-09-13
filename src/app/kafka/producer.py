@@ -18,6 +18,7 @@ async def start_kafka_producer() -> AIOKafkaProducer | None:
     producer = AIOKafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap_servers,
         client_id=settings.kafka_client_id,
+        enable_idempotence=True,
         value_serializer=lambda value: json.dumps(value).encode("utf-8"),
         key_serializer=lambda key: key.encode("utf-8") if key is not None else None,
     )
@@ -29,6 +30,7 @@ async def start_kafka_producer() -> AIOKafkaProducer | None:
             error=str(exc),
             bootstrap_servers=settings.kafka_bootstrap_servers,
         )
+        await producer.stop()
         _producer = None
         return None
 

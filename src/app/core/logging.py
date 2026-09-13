@@ -47,5 +47,5 @@ def configure_logging() -> None:
     root_logger.setLevel(logging.DEBUG if settings.debug else logging.INFO)
 
     # Quiet noisy libraries
-    for noisy in ("uvicorn.access", "sqlalchemy.engine","aiokafka"):
+    for noisy in ("uvicorn.access", "sqlalchemy.engine", "aiokafka"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
