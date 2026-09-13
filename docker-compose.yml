@@ -1,0 +1,128 @@
+services:
+  app:
+    container_name: sgi-base-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-8000}:${APP_PORT:-8000}"
+    environment:
+      APP_ENV: dev
+      APP_HOST: 0.0.0.0
+      APP_PORT: ${APP_PORT:-8000}
+      APP_DOCS_ENABLED: ${APP_DOCS_ENABLED:-true}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/sgi_backend
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID:-sgi-backend}
+      OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-sgi-backend}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_PATH: ${METRICS_PATH:-/metrics}
+      TENANT_SCHEMA_PREFIX: ${TENANT_SCHEMA_PREFIX:-tenant_}
+      SHARED_SCHEMA: ${SHARED_SCHEMA:-shared}
+    volumes:
+      - ./src:/app/src
+      - ./keys:/app/keys
+    networks:
+      - default
+      - sgi-network
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\\\"APP_PORT\\\", \\\"8000\\\")}/api/v1/health', timeout=3)\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  db:
+    container_name: sgi-base-db
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sgi_backend
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    container_name: sgi-base-redis
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  jaeger:
+    container_name: sgi-base-jaeger
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${OTLP_GRPC_PORT:-4317}:4317"
+      - "${OTLP_HTTP_PORT:-4318}:4318"
+
+  prometheus:
+    container_name: sgi-base-prometheus
+    image: prom/prometheus:latest
+    environment:
+      APP_PORT: ${APP_PORT:-8000}
+      METRICS_PATH: ${METRICS_PATH:-/metrics}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /etc/prometheus/prometheus.yml <<EOF
+        global:
+          scrape_interval: 15s
+
+        scrape_configs:
+          - job_name: "sgi-base-service"
+            metrics_path: "$${METRICS_PATH:-/metrics}"
+            static_configs:
+              - targets: ["app:$${APP_PORT:-8000}"]
+        EOF
+        exec /bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --web.console.libraries=/usr/share/prometheus/console_libraries \
+          --web.console.templates=/usr/share/prometheus/consoles
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      app:
+        condition: service_started
+    volumes:
+      - prometheus_data:/prometheus
+
+networks:
+  default:
+  sgi-network:
+    external: true
+
+volumes:
+  postgres_data:
+  prometheus_data:

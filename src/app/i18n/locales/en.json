@@ -1,0 +1,10 @@
+{
+  "health.ok":                         "ok",
+  "health.unavailable":                "unavailable",
+  "health.detail_db":                  "db",
+  "security.token_invalid":            "Invalid or expired token",
+  "security.tenant_missing":           "No tenant context for this request",
+  "security.token_claims_malformed":   "Malformed token claims",
+  "example.not_found":                 "ExampleItem {item_id} not found",
+  "example.version_mismatch":          "Version mismatch: expected {expected_version}, got {actual_version}"
+}
